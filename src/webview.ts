@@ -27,6 +27,7 @@ export const enum SizeHint {
 export class Webview {
   #handle: Pointer | null = null;
   #callbacks: Map<string, JSCallback> = new Map();
+  #readycallbacks: Function[] = [];
 
   /** **UNSAFE**: Highly unsafe API, beware!
    *
@@ -69,8 +70,10 @@ export class Webview {
    * ```
    */
   set size({ width, height, hint }: Size) {
-    //@ts-ignore
-    lib.symbols.webview_set_size(this.#handle, width, height, hint);
+    this.onReady(() => {
+      //@ts-ignore
+      lib.symbols.webview_set_size(this.#handle, width, height, hint);
+    });
   }
 
   /**
@@ -91,7 +94,9 @@ export class Webview {
    * ```
    */
   set title(title: string) {
-    lib.symbols.webview_set_title(this.#handle, encodeCString(title));
+    this.onReady(() => {
+      lib.symbols.webview_set_title(this.#handle, encodeCString(title));
+    });
   }
 
   /** **UNSAFE**: Highly unsafe API, beware!
@@ -143,10 +148,15 @@ export class Webview {
     },
     window: Pointer | null = null,
   ) {
-    this.#handle =
-      typeof debugOrHandle === "bigint" || typeof debugOrHandle === "number"
-        ? debugOrHandle
-        : lib.symbols.webview_create(Number(debugOrHandle), window);
+    if(typeof debugOrHandle === "bigint" || typeof debugOrHandle === "number") {
+      this.#handle = debugOrHandle
+    }
+    else {
+      lib.symbols.webview_create(Number(debugOrHandle), window).then((pointer) => {
+        this.#handle = pointer;
+        this.#readycallbacks.forEach((cb) => cb());
+      });
+    }
     if (size !== undefined) this.size = size;
     instances.push(this);
   }
@@ -156,10 +166,12 @@ export class Webview {
    * resources.
    */
   destroy() {
-    for (const callback of this.#callbacks.keys()) this.unbind(callback);
-    lib.symbols.webview_terminate(this.#handle);
-    lib.symbols.webview_destroy(this.#handle);
-    this.#handle = null;
+    this.onReady(() => {
+      for (const callback of this.#callbacks.keys()) this.unbind(callback);
+      lib.symbols.webview_terminate(this.#handle);
+      lib.symbols.webview_destroy(this.#handle);
+      this.#handle = null;
+    });
   }
 
   /**
@@ -168,14 +180,26 @@ export class Webview {
    * properly, webview will re-encodeCString it for you.
    */
   navigate(url: string) {
-    lib.symbols.webview_navigate(this.#handle, encodeCString(url));
+    this.onReady(() => {
+      lib.symbols.webview_navigate(this.#handle, encodeCString(url));
+    });
   }
 
   /**
    * Sets the current HTML of the webview to the given html string.
    */
   setHTML(html: string) {
-    lib.symbols.webview_set_html(this.#handle, encodeCString(html));
+    this.onReady(() => {
+      lib.symbols.webview_set_html(this.#handle, encodeCString(html));
+    });
+  }
+
+  onReady(callback: Function) {
+    if(this.#handle) {
+      callback();
+      return;
+    }
+    this.#readycallbacks.push(callback);
   }
 
   /**
@@ -183,8 +207,10 @@ export class Webview {
    * the webview is automatically destroyed.
    */
   run() {
-    lib.symbols.webview_run(this.#handle);
-    this.destroy();
+    this.onReady(() => {
+      lib.symbols.webview_run(this.#handle);
+      this.destroy();
+    });
   }
 
   /**
@@ -204,25 +230,27 @@ export class Webview {
     callback: (seq: string, req: string, arg: Pointer | null) => void,
     arg: Pointer | null = null,
   ) {
-    const callbackResource = new JSCallback(
-      (seqPtr: Pointer, reqPtr: Pointer, arg: Pointer | null) => {
-        const seq = seqPtr ? new CString(seqPtr) : "";
-        const req = reqPtr ? new CString(reqPtr) : "";
-        //@ts-ignore
-        callback(seq, req, arg);
-      },
-      {
-        args: [FFIType.pointer, FFIType.pointer, FFIType.pointer],
-        returns: FFIType.void,
-      },
-    );
-    this.#callbacks.set(name, callbackResource);
-    lib.symbols.webview_bind(
-      this.#handle,
-      encodeCString(name),
-      callbackResource.ptr,
-      arg,
-    );
+    this.onReady(() => {
+      const callbackResource = new JSCallback(
+        (seqPtr: Pointer, reqPtr: Pointer, arg: Pointer | null) => {
+          const seq = seqPtr ? new CString(seqPtr) : "";
+          const req = reqPtr ? new CString(reqPtr) : "";
+          //@ts-ignore
+          callback(seq, req, arg);
+        },
+        {
+          args: [FFIType.pointer, FFIType.pointer, FFIType.pointer],
+          returns: FFIType.void,
+        },
+      );
+      this.#callbacks.set(name, callbackResource);
+      lib.symbols.webview_bind(
+        this.#handle,
+        encodeCString(name),
+        callbackResource.ptr,
+        arg,
+      );
+    });
   }
 
   /**
