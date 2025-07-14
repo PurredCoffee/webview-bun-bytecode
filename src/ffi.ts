@@ -5,10 +5,6 @@ export function encodeCString(value: string) {
   return ptr(new TextEncoder().encode(value + "\0"));
 }
 
-export class fakePtr {
-
-}
-
 export const instances: Webview[] = [];
 
 /**
@@ -70,6 +66,12 @@ type asynccallback<funcO extends {[obj: string]: Promise<any>}> = {
     args: any[]
 }
 
+/**
+ * Open a library using `bun:ffi` without awaiting it, return a Library full of promises that will be cached until the library is loaded
+ * @param lib_file promise of a library that you would insert into dlopen
+ * @param symbols — Map of symbols to load where the key is the symbol name and the value is the FFIFunction
+ * @returns 
+ */
 function wrapLib<Type extends Symbols>(lib_file: Promise<any> | undefined, symbols: Type): AsyncLibrary<Type> {
   let callbacks: asynccallback<any>[] = [];
 
